@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>東京都 教育施設マップ</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+<style>
+:root{--bg:#f4f6f8;--fg:#202935;--muted:#687484;--line:#e0e5eb;--accent:#315fce;--white:#fff}*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;color:var(--fg);background:var(--bg)}.app{display:grid;grid-template-columns:310px minmax(0,1fr);height:100dvh;min-height:520px}.sidebar{padding:24px 20px;background:var(--white);border-right:1px solid var(--line);overflow:auto;z-index:500}h1{font-size:1.35rem;line-height:1.4;margin:4px 0 10px}.eyebrow{font-size:.72rem;letter-spacing:.12em;color:var(--accent);font-weight:700}.description,.hint{font-size:.83rem;color:var(--muted);line-height:1.6}.control{margin:22px 0 0}label{display:block;font-size:.84rem;font-weight:650;margin-bottom:8px}input,select{width:100%;border:1px solid #cbd3dd;border-radius:9px;background:#fff;padding:11px 12px;font:inherit;font-size:.91rem;color:var(--fg)}input:focus,select:focus{outline:2px solid #b8c9ff;border-color:var(--accent)}.stats{margin-top:24px;border:1px solid var(--line);border-radius:12px;padding:16px;background:#f8faff}.stats strong{display:block;font-size:1.9rem;letter-spacing:-.04em}.stats span{font-size:.82rem;color:var(--muted)}button{border:1px solid var(--line);border-radius:9px;background:#fff;padding:10px 12px;font:inherit;font-size:.85rem;cursor:pointer}button:hover{background:#f0f3f8}.actions{display:flex;gap:8px;margin-top:14px}.actions button{flex:1}.status{font-size:.82rem;line-height:1.6;color:var(--muted);margin-top:16px;overflow-wrap:anywhere}.status.error{color:#a53232}#map{height:100%;min-height:520px}.popup-title{font-weight:700;font-size:1rem;margin-bottom:6px}.popup-row{font-size:.85rem;margin:4px 0}.popup-key{color:#6b7280}.footer{font-size:.75rem;color:var(--muted);margin-top:24px;line-height:1.6}@media(max-width:720px){.app{display:flex;flex-direction:column;height:100dvh;min-height:600px}.sidebar{flex:none;padding:15px 16px;max-height:46dvh;border-right:0;border-bottom:1px solid var(--line)}h1{font-size:1.15rem;margin:2px 0}.description{margin:3px 0}.control{margin-top:12px}.stats{margin-top:12px;padding:10px 13px}.stats strong{font-size:1.45rem}.footer{margin-top:12px}#map{min-height:300px;flex:1}} </style>
+</head>
+<body>
+<div class="app">
+<aside class="sidebar">
+<div class="eyebrow">EDUCATION FACILITIES</div>
+<h1>東京都 教育施設マップ</h1>
+<p class="description">GeoJSONの教育施設を地図上に表示します。マーカーをクリックすると詳細を確認できます。</p>
+<div class="control"><label for="search">施設名で検索</label><input id="search" type="search" placeholder="例：豊海幼稚園"></div>
+<div class="control"><label for="category">学校種別</label><select id="category"><option value="">すべての学校種別</option></select></div>
+<div class="stats"><strong id="count">—</strong><span>表示中の施設数 / <span id="total">—</span> 件</span></div>
+<div class="actions"><button id="reset" type="button">条件をクリア</button><button id="fit" type="button">表示範囲に合わせる</button></div>
+<p class="status" id="status" role="status">GeoJSONを読み込み中…</p>
+<p class="footer">データ：P29-23_13.geojson<br>背景地図：© OpenStreetMap contributors<br>地図表示にはインターネット接続が必要です。</p>
+</aside>
+<main id="map" aria-label="教育施設の地図"></main>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script>
+'use strict';
+const FILE_NAME='P29-23_13.geojson';
+const TYPES={
+'16001':'小学校','16002':'中学校','16003':'中等教育学校','16004':'高等学校',
+'16005':'高等専門学校','16006':'短期大学','16007':'大学','16011':'幼稚園',
+'16012':'特別支援学校','16013':'幼保連携型認定こども園','16014':'義務教育学校',
+'16015':'各種学校','16016':'専修学校'};
+const category=document.getElementById('category');
+const search=document.getElementById('search');
+const status=document.getElementById('status');
+const count=document.getElementById('count');
+const total=document.getElementById('total');
+Object.entries(TYPES).forEach(([code,name])=>{const option=document.createElement('option');option.value=code;option.textContent=name;category.append(option)});
+if(typeof L==='undefined'){
+ status.textContent='地図ライブラリを読み込めませんでした。インターネット接続を確認してください。';status.classList.add('error');
+}else{
+ const map=L.map('map',{preferCanvas:true}).setView([35.68,139.70],10);
+ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
+ const cluster=typeof L.markerClusterGroup==='function'?L.markerClusterGroup({chunkedLoading:true,showCoverageOnHover:false,maxClusterRadius:55}):L.layerGroup();
+ map.addLayer(cluster);
+ let facilities=[];let timer;
+ const popupNode=(feature)=>{
+   const p=feature.properties||{};
+   const div=document.createElement('div');
+   const heading=document.createElement('div');heading.className='popup-title';heading.textContent=p.P29_004||'名称不明';div.append(heading);
+   [['学校種別',TYPES[String(p.P29_003)]||`不明（${p.P29_003??'未設定'}）`],['住所',p.P29_005||'未設定'],['学校コード',p.P29_002||'未設定'],['キャンパス',p.P29_009]].forEach(([key,value])=>{
+     if(value===null||value===undefined||value==='')return;
+     const line=document.createElement('div');line.className='popup-row';
+     const label=document.createElement('span');label.className='popup-key';label.textContent=key+'：';
+     line.append(label,document.createTextNode(String(value)));div.append(line);
+   });return div;
+ };
+ function update(){
+   const q=search.value.trim().normalize('NFKC').toLocaleLowerCase('ja');const selected=category.value;
+   const matching=facilities.filter(f=>{
+     const p=f.properties||{};
+     return (!selected||String(p.P29_003)===selected)&&(!q||String(p.P29_004||'').normalize('NFKC').toLocaleLowerCase('ja').includes(q));
+   });
+   cluster.clearLayers();
+   const markers=matching.map(f=>{const [lon,lat]=f.geometry.coordinates;return L.marker([lat,lon]).bindPopup(()=>popupNode(f))});
+   cluster.addLayers(markers);count.textContent=matching.length.toLocaleString('ja-JP');
+   status.classList.remove('error');status.textContent=`${matching.length.toLocaleString('ja-JP')}件を表示しています。`;
+   console.log('[施設マップ] フィルター更新',{search:q,category:selected,count:matching.length});
+ }
+ function fit(){const bounds=cluster.getBounds?.();if(bounds&&bounds.isValid())map.fitBounds(bounds.pad(.08),{maxZoom:15});}
+ search.addEventListener('input',()=>{clearTimeout(timer);timer=setTimeout(update,180)});
+ category.addEventListener('change',update);
+ document.getElementById('reset').addEventListener('click',()=>{search.value='';category.value='';update()});
+ document.getElementById('fit').addEventListener('click',fit);
+ async function load(){
+   try{
+     const response=await fetch('./'+FILE_NAME);
+     if(!response.ok)throw new Error(`HTTP ${response.status}`);
+     const data=await response.json();
+     if(data.type!=='FeatureCollection'||!Array.isArray(data.features))throw new Error('FeatureCollection形式ではありません');
+     facilities=data.features.filter(f=>f&&f.geometry?.type==='Point'&&Array.isArray(f.geometry.coordinates)&&f.geometry.coordinates.length>=2&&Number.isFinite(f.geometry.coordinates[0])&&Number.isFinite(f.geometry.coordinates[1]));
+     total.textContent=facilities.length.toLocaleString('ja-JP');
+     console.log('[施設マップ] GeoJSON読込成功',{file:FILE_NAME,features:data.features.length,points:facilities.length});
+     update();fit();
+   }catch(error){
+     console.error('[施設マップ] GeoJSON読込エラー',error);
+     status.classList.add('error');
+     status.textContent='GeoJSONを読み込めません。同じフォルダに '+FILE_NAME+' を置き、ローカルサーバー経由で開いてください（例：python -m http.server 8000）。詳細はF12のConsoleを確認してください。';
+   }
+ }
+ load();
+}
+</script>
+</body>
+</html>
